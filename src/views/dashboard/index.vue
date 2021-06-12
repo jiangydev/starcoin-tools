@@ -150,7 +150,7 @@ export default {
   methods: {
     // 初始化 provider 和检测网络
     async initStarcoin() {
-      this.provider = new starcoin.providers.JsonrpcProvider('http://main.seed.starcoin.org:9850')
+      this.provider = new starcoin.providers.JsonrpcProvider('https://main-seed.starcoin.org')
       const networkRsp = await this.provider.detectNetwork()
       // console.log('当前网络 -> ', networkRsp)
       this.starcoinNetwork = {
