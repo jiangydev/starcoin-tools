@@ -9,8 +9,9 @@
         >
           <template slot="title">
             <div class="iconSize">风险提示：</div>
-            <div class="iconSize">1. 本页面功能使用前，请确保打开的不是钓鱼网站；</div>
-            <div class="iconSize">2. 若有任何疑问, 请在社区群内联系开发者【安_change】；</div>
+            <div class="iconSize">1. 本网站代码已开源，地址：https://github.com/jiangydev/starcoin-tools；</div>
+            <div class="iconSize">2. 本页面功能使用前，请确保打开的不是钓鱼网站；</div>
+            <div class="iconSize">3. 若有任何疑问, 请在社区群内联系开发者【安_change】；</div>
             <div class="iconSize">STC 捐赠地址: 0x8b79fdf7bd004b72ea4bd83289429455 / stc1p3dulmaaaqp9h96jtmqegjs552hhj0qt5jw0x2qen6p42xma68exgk70a777sqjmjaf9asv5fg22929qzpup</div>
           </template>
         </el-alert>
@@ -38,9 +39,9 @@
           开始时间：{{ proposalInfo.startTime }}
           <el-divider direction="vertical" />
           结束时间：{{ proposalInfo.endTime }}<br><br>
-          赞成票数：{{ proposalInfo.agreeSTC }} STC
+          赞成票数：{{ proposalInfo.agreeSTC / Math.pow(10, 9) }} STC
           <el-divider direction="vertical" />
-          反对票数：{{ proposalInfo.disagreeSTC }} STC
+          反对票数：{{ proposalInfo.disagreeSTC / Math.pow(10, 9) }} STC
         </el-card>
       </el-col>
     </el-row>
@@ -50,7 +51,7 @@
           <el-form ref="ruleForm" :model="ruleForm" :rules="rules" label-width="130px" class="vote-ruleForm">
             <el-form-item label="投票账户私钥" prop="privateKey">
               <el-row align="middle" type="flex">
-                <el-col :span="12">
+                <el-col :span="16">
                   <el-input v-model="ruleForm.privateKey" :disabled="ruleForm.keyDisable" autocomplete="off" />
                 </el-col>
                 <el-col :span="4">
@@ -60,9 +61,17 @@
                     active-color="#13ce66"
                     inactive-color="#ff4949"
                     active-text="锁定"
-                    inactive-text="解锁"
+                    inactive-text=" "
                     @change="changeKeyLock"
                   />
+                </el-col>
+                <el-col :span="4">
+                  <el-button
+                    type="primary"
+                    icon="el-icon-refresh"
+                    :disabled="!ruleForm.keyDisable"
+                    @click="getAccountInfo()"
+                  >刷新账户余额</el-button>
                 </el-col>
               </el-row>
             </el-form-item>
@@ -85,7 +94,7 @@
               <el-input-number v-model="ruleForm.amount" :precision="4" :step="0.1" :min="0.0001" :max="999999999" />
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" :loading="voteLoading" @click="submitForm('ruleForm')">立即投票</el-button>
+              <el-button type="primary" :loading="voteLoading" :disabled="!ruleForm.keyDisable" @click="submitForm('ruleForm')">立即投票</el-button>
               <el-button @click="resetForm('ruleForm')">重置</el-button>
             </el-form-item>
           </el-form>
@@ -177,8 +186,8 @@ export default {
       this.proposalInfo.startTime = moment(startTime).format('YYYY-MM-DD HH:mm:ss')
       const endTime = proposalInfoRsp[2]
       this.proposalInfo.endTime = moment(endTime).format('YYYY-MM-DD HH:mm:ss')
-      this.proposalInfo.agreeSTC = proposalInfoRsp[3] / Math.pow(10, 9)
-      this.proposalInfo.disagreeSTC = proposalInfoRsp[4] / Math.pow(10, 9)
+      this.proposalInfo.agreeSTC = proposalInfoRsp[3]
+      this.proposalInfo.disagreeSTC = proposalInfoRsp[4]
       // console.log('提案详情 -> ', proposalInfoRsp)
     },
     // 锁定/解锁私钥
@@ -199,14 +208,18 @@ export default {
         // 发送者地址
         const senderAddressHex = starcoin.encoding.publicKeyToAddress(senderPublicKeyHex)
         this.accountInfo.address = senderAddressHex
-        const balance = await this.provider.getBalance(senderAddressHex)
-        this.accountInfo.balance = balance
-        // 获取账户已投票数
-        const voteResource = await this.provider.getResource(senderAddressHex, '0x1::Dao::Vote<0x1::STC::STC>')
-        this.accountInfo.voteCount = voteResource.stake.value
+        this.getAccountInfo()
       } else {
         this.ruleForm.keyDisable = false
       }
+    },
+    // 获取账户信息
+    async getAccountInfo() {
+      const balance = await this.provider.getBalance(this.accountInfo.address)
+      this.accountInfo.balance = balance
+      // 获取账户已投票数
+      const voteResource = await this.provider.getResource(this.accountInfo.address, '0x1::Dao::Vote<0x1::STC::STC>')
+      this.accountInfo.voteCount = voteResource.stake.value
     },
     // 投票
     submitForm(formName) {
@@ -234,6 +247,8 @@ export default {
     },
     resetForm(formName) {
       this.$refs[formName].resetFields()
+      this.ruleForm.keyLock = false
+      this.ruleForm.keyDisable = false
     },
     async onSubmit(senderPrivateKeyHex, amount, agree) {
       this.voteLoading = true
@@ -351,15 +366,10 @@ export default {
       }
       const functionId = '0x1::DaoVoteScripts::cast_vote'
 
-      const address = '0x1'
-      const module = 'STC'
-      const name = 'STC'
-      const type_params = []
-
-      const t_module = 'UpgradeModuleDaoProposal'
-      const t_name = 'UpgradeModuleV2'
-      const tyArgs = [{ Struct: { address, module, name, type_params }},
-        { Struct: { address: address, module: t_module, name: t_name, type_params }}]
+      const tyArgs = [
+        { Struct: { address: '0x1', module: 'STC', name: 'STC', type_params: [] }},
+        { Struct: { address: '0x1', module: 'UpgradeModuleDaoProposal', name: 'UpgradeModuleV2', type_params: [] }}
+      ]
 
       // Multiple BcsSerializers should be used in different closures, otherwise, the latter will be contaminated by the former.
       const amountSCSHex = (function() {
