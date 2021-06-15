@@ -26,7 +26,7 @@
           1. 从国库提款的时候增加额度限制，最大数额不能超过投票通过阈值（当前流通量的 4%）。<br>
           2. 实现了新的链上认证策略，简化初始化链上账号的复杂度。
           <el-divider>投票状态</el-divider>
-          <el-steps :active="proposalInfo.state" finish-status="success">
+          <el-steps :active="proposalInfo.state - 1" finish-status="success">
             <el-step title="⭐等待公示中" />
             <el-step title="🔥正在投票中" />
             <el-step title="😭提案被拒绝" />
@@ -70,6 +70,7 @@
                     type="primary"
                     icon="el-icon-refresh"
                     :disabled="!ruleForm.keyDisable"
+                    :loading="voteLoading"
                     @click="getAccountInfo()"
                   >刷新账户余额</el-button>
                 </el-col>
@@ -84,6 +85,7 @@
             <el-form-item label="当前账户已投票数">
               <span>{{ accountInfo.voteCount / Math.pow(10, 9) }} STC</span>
             </el-form-item>
+            <el-divider>质押投票</el-divider>
             <el-form-item label="是否同意提案" prop="agree">
               <el-radio-group v-model="ruleForm.agree">
                 <el-radio label="true">同意</el-radio>
@@ -96,6 +98,10 @@
             <el-form-item>
               <el-button type="primary" :loading="voteLoading" :disabled="!ruleForm.keyDisable" @click="submitForm('ruleForm')">立即投票</el-button>
               <el-button @click="resetForm('ruleForm')">重置</el-button>
+            </el-form-item>
+            <el-divider>质押取回</el-divider>
+            <el-form-item>
+              <el-button type="primary" :loading="voteLoading" :disabled="!ruleForm.keyDisable" @click="unstakeVote('ruleForm')">取回抵押</el-button>
             </el-form-item>
           </el-form>
         </el-card>
@@ -159,7 +165,7 @@ export default {
   methods: {
     // 初始化 provider 和检测网络
     async initStarcoin() {
-      this.provider = new starcoin.providers.JsonrpcProvider('https://main-seed.starcoin.org')
+      this.provider = new starcoin.providers.JsonRpcProvider('https://main-seed.starcoin.org')
       const networkRsp = await this.provider.detectNetwork()
       // console.log('当前网络 -> ', networkRsp)
       this.starcoinNetwork = {
@@ -208,18 +214,27 @@ export default {
         // 发送者地址
         const senderAddressHex = starcoin.encoding.publicKeyToAddress(senderPublicKeyHex)
         this.accountInfo.address = senderAddressHex
-        this.getAccountInfo()
+        await this.getAccountInfo()
       } else {
         this.ruleForm.keyDisable = false
       }
     },
     // 获取账户信息
     async getAccountInfo() {
-      const balance = await this.provider.getBalance(this.accountInfo.address)
-      this.accountInfo.balance = balance
-      // 获取账户已投票数
-      const voteResource = await this.provider.getResource(this.accountInfo.address, '0x1::Dao::Vote<0x1::STC::STC>')
-      this.accountInfo.voteCount = voteResource.stake.value
+      this.voteLoading = true
+      try {
+        const balance = await this.provider.getBalance(this.accountInfo.address)
+        this.accountInfo.balance = balance
+        // 获取账户已投票数
+        const voteResource = await this.provider.getResource(this.accountInfo.address, '0x1::Dao::Vote<0x1::STC::STC>')
+        if (voteResource !== undefined) {
+          this.accountInfo.voteCount = voteResource.stake.value
+        } else {
+          this.accountInfo.voteCount = 0
+        }
+      } finally {
+        this.voteLoading = false
+      }
     },
     // 投票
     submitForm(formName) {
@@ -245,10 +260,105 @@ export default {
         }
       })
     },
+    unstakeVote(formName) {
+      this.$refs[formName].validate((valid) => {
+        if (valid) {
+          this.voteLoading = true
+          if (this.proposalInfo.state <= 2) {
+            throw new Error('当前提案状态无法取回质押')
+          }
+          this.onUnstakeVoteSubmit(
+            this.ruleForm.privateKey
+          )
+        } else {
+          console.log('error submit!!')
+          return false
+        }
+      })
+    },
     resetForm(formName) {
       this.$refs[formName].resetFields()
       this.ruleForm.keyLock = false
       this.ruleForm.keyDisable = false
+    },
+    async onUnstakeVoteSubmit(senderPrivateKeyHex) {
+      this.voteLoading = true
+      try {
+        const provider = this.provider
+        if (provider === null) {
+          throw new Error('Starcoin 网络未准备好，请刷新页面重试')
+        }
+        const chainId = this.starcoinNetwork.chainId
+        const senderAddressHex = this.accountInfo.address
+        const senderPublicKeyHex = this.accountInfo.publicKey
+        // senderAddressHex = '0x8b79fdf7bd004b72ea4bd83289429455'
+        // 获取账号交易数
+        const senderSequenceNumber = await provider.getSequenceNumber(senderAddressHex)
+
+        // 提案发起者地址
+        const receiver = '0xb2aa52f94db4516c5beecef363af850a'
+        let receiverAddressHex = ''
+        if (receiver.slice(0, 3) === 'stc') {
+          const receiptIdentifier = starcoin.starcoin_types.ReceiptIdentifier.decode(receiver)
+          receiverAddressHex = starcoin.encoding.addressFromSCS(receiptIdentifier.accountAddress)
+        } else {
+          receiverAddressHex = receiver
+        }
+
+        // 构建交易请求体
+        const txnRequest = {
+          chain_id: chainId,
+          gas_unit_price: 1,
+          sender: senderAddressHex,
+          sender_public_key: senderPublicKeyHex,
+          sequence_number: senderSequenceNumber,
+          max_gas_amount: 10000000,
+          script: {
+            code: '0x1::DaoVoteScripts::unstake_vote',
+            type_args: ['0x1::STC::STC', '0x1::UpgradeModuleDaoProposal::UpgradeModuleV2'],
+            args: [receiverAddressHex, '0']
+          }
+        }
+        console.log('取回质押请求 -> ', JSON.stringify(txnRequest))
+        const txnOutput = await provider.dryRun(txnRequest)
+        console.log('取回质押执行模拟结果 -> ', txnOutput)
+
+        // generate maxGasAmount from contract.dry_run -> gas_used
+        const maxGasAmount = txnOutput.gas_used
+
+        // because the time system in dev network is relatively static,
+        // we should use nodeInfo.now_secondsinstead of using new Date().getTime()
+        const nowSeconds = await provider.getNowSeconds()
+        // expired after 12 hours since Unix Epoch
+        const expirationTimestampSecs = nowSeconds + 43200
+
+        // 生成原始提案交易数据
+        const scriptFunction = this.buildUnstakeVoteScriptFunction(receiverAddressHex, 0)
+        const rawVoteTransaction = this.generateRawUserTransaction(
+          senderAddressHex,
+          maxGasAmount,
+          scriptFunction,
+          senderSequenceNumber,
+          expirationTimestampSecs,
+          chainId
+        )
+        console.log('原始提案交易数据 -> ', rawVoteTransaction)
+        // 签名和发送交易
+        await this.signAndSendTransaction(senderPrivateKeyHex, rawVoteTransaction)
+
+        this.$message({
+          type: 'success',
+          message: '取回质押成功!'
+        })
+        this.voteLoading = false
+      } catch (error) {
+        this.$message({
+          type: 'error',
+          message: '取回质押失败!' + error.message
+        })
+        this.voteLoading = false
+      }
+      await this.getAccountInfo()
     },
     async onSubmit(senderPrivateKeyHex, amount, agree) {
       this.voteLoading = true
@@ -263,9 +373,6 @@ export default {
         // senderAddressHex = '0x8b79fdf7bd004b72ea4bd83289429455'
         // 获取账号交易数
         const senderSequenceNumber = await provider.getSequenceNumber(senderAddressHex)
-        // 获取账号余额
-        const balance = await provider.getBalance(senderAddressHex)
-        console.log(senderAddressHex, ' 余额 -> ', balance)
 
         // 提案发起者地址
         const receiver = '0xb2aa52f94db4516c5beecef363af850a'
@@ -306,33 +413,18 @@ export default {
         const expirationTimestampSecs = nowSeconds + 43200
 
         // 生成原始提案交易数据
-        const rawVoteTransaction = this.generateRawVoteTransaction(
+        const voteScriptFunction = this.buildVoteScriptFunction(receiverAddressHex, 0, amount, agree)
+        const rawVoteTransaction = this.generateRawUserTransaction(
           senderAddressHex,
-          receiver,
-          amount,
           maxGasAmount,
-          // 提案ID
-          0,
-          agree,
+          voteScriptFunction,
           senderSequenceNumber,
           expirationTimestampSecs,
           chainId
         )
         console.log('原始提案交易数据 -> ', rawVoteTransaction)
-
-        const signedUserTransactionHex = await starcoin.utils.tx.signRawUserTransaction(
-          senderPrivateKeyHex,
-          rawVoteTransaction
-        )
-
-        console.log('提案交易数据签名 -> ', signedUserTransactionHex)
-
-        // 发送交易
-        const txn = await provider.sendTransaction(signedUserTransactionHex)
-        console.log('提案交易执行结果 -> ', txn)
-
-        const txnInfo = await txn.wait(1)
-        console.log('提案交易确认结果 -> ', txnInfo)
+        // 签名和发送交易
+        await this.signAndSendTransaction(senderPrivateKeyHex, rawVoteTransaction)
 
         this.$message({
           type: 'success',
@@ -346,26 +438,21 @@ export default {
         })
         this.voteLoading = false
       }
+      await this.getAccountInfo()
     },
-    // 生成投票交易原始数据
-    generateRawVoteTransaction(senderAddress,
-      receiverInfo,
-      amount,
-      maxGasAmount,
-      proposalId,
-      agree,
-      senderSequenceNumber,
-      expirationTimestampSecs,
-      chainId) {
+    /**
+     * 构造 vote payload
+     */
+    buildVoteScriptFunction(receiver, proposalId, amount, agree) {
       let receiverAddress
-      if (receiverInfo.slice(0, 3) === 'stc') {
-        const receiptIdentifier = starcoin.starcoin_types.ReceiptIdentifier.decode(receiverInfo)
+      if (receiver.slice(0, 3) === 'stc') {
+        const receiptIdentifier = starcoin.starcoin_types.ReceiptIdentifier.decode(receiver)
         receiverAddress = starcoin.encoding.addressFromSCS(receiptIdentifier.accountAddress)
       } else {
-        receiverAddress = receiverInfo
+        receiverAddress = receiver
       }
-      const functionId = '0x1::DaoVoteScripts::cast_vote'
 
+      const functionId = '0x1::DaoVoteScripts::cast_vote'
       const tyArgs = [
         { Struct: { address: '0x1', module: 'STC', name: 'STC', type_params: [] }},
         { Struct: { address: '0x1', module: 'UpgradeModuleDaoProposal', name: 'UpgradeModuleV2', type_params: [] }}
@@ -397,7 +484,50 @@ export default {
       ]
 
       const scriptFunction = starcoin.utils.tx.encodeScriptFunction(functionId, tyArgs, args)
+      return scriptFunction
+    },
+    /**
+     * 构造 unstake vote payload
+     */
+    buildUnstakeVoteScriptFunction(receiver, proposalId, amount, agree) {
+      let receiverAddress
+      if (receiver.slice(0, 3) === 'stc') {
+        const receiptIdentifier = starcoin.starcoin_types.ReceiptIdentifier.decode(receiver)
+        receiverAddress = starcoin.encoding.addressFromSCS(receiptIdentifier.accountAddress)
+      } else {
+        receiverAddress = receiver
+      }
 
+      const functionId = '0x1::DaoVoteScripts::unstake_vote'
+      const tyArgs = [
+        { Struct: { address: '0x1', module: 'STC', name: 'STC', type_params: [] }},
+        { Struct: { address: '0x1', module: 'UpgradeModuleDaoProposal', name: 'UpgradeModuleV2', type_params: [] }}
+      ]
+
+      const proposalSCSHex = (function() {
+        const se = new starcoin.bcs.BcsSerializer()
+        se.serializeU64(proposalId)
+        return hexlify(se.getBytes())
+      })()
+
+      const args = [
+        arrayify(receiverAddress),
+        arrayify(proposalSCSHex)
+      ]
+
+      const scriptFunction = starcoin.utils.tx.encodeScriptFunction(functionId, tyArgs, args)
+      return scriptFunction
+    },
+    /**
+     * 生成交易原始数据
+     */
+    generateRawUserTransaction(
+      senderAddress,
+      maxGasAmount,
+      scriptFunction,
+      senderSequenceNumber,
+      expirationTimestampSecs,
+      chainId) {
       // Step 1-2: generate RawUserTransaction
       const sender = starcoin.encoding.addressToSCS(senderAddress)
       const sequence_number = BigNumber(senderSequenceNumber)
@@ -411,6 +541,24 @@ export default {
       const rawVoteTransaction = new starcoin.starcoin_types.RawUserTransaction(sender, sequence_number, payload, max_gas_amount, gas_unit_price, gas_token_code, expiration_timestamp_secs, chain_id)
 
       return rawVoteTransaction
+    },
+    /**
+     * 签名并发送交易
+     */
+    async signAndSendTransaction(senderPrivateKeyHex, rawUserTransaction) {
+      const signedUserTransactionHex = await starcoin.utils.tx.signRawUserTransaction(
+        senderPrivateKeyHex,
+        rawUserTransaction
+      )
+
+      console.log('提案交易数据签名 -> ', signedUserTransactionHex)
+
+      // 发送交易
+      const txn = await this.provider.sendTransaction(signedUserTransactionHex)
+      console.log('提案交易执行结果 -> ', txn)
+
+      const txnInfo = await txn.wait(1)
+      console.log('提案交易确认结果 -> ', txnInfo)
     },
     onCancel() {
       this.$message({
@@ -427,10 +575,10 @@ export default {
   text-align: center;
 }
 .el-row {
-    margin-bottom: 20px;
-  }
-  .el-col {
-    border-radius: 4px;
-  }
+  margin-bottom: 20px;
+}
+.el-col {
+  border-radius: 4px;
+}
 </style>
 
