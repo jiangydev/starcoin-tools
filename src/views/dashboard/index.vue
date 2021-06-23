@@ -8,11 +8,11 @@
           :closable="false"
         >
           <template slot="title">
-            <div class="iconSize">风险提示：</div>
-            <div class="iconSize">1. 本网站代码已开源，地址：https://github.com/jiangydev/starcoin-tools；</div>
-            <div class="iconSize">2. 本页面功能使用前，请确保打开的不是钓鱼网站；</div>
-            <div class="iconSize">3. 若有任何疑问, 请在社区群内联系开发者【安_change】；</div>
-            <div class="iconSize">STC 捐赠地址: 0x8b79fdf7bd004b72ea4bd83289429455 / stc1p3dulmaaaqp9h96jtmqegjs552hhj0qt5jw0x2qen6p42xma68exgk70a777sqjmjaf9asv5fg22929qzpup</div>
+            <div class="iconSize">风险提示：</div><br>
+            <div class="iconSize">1. 本网站代码已开源，地址：https://github.com/jiangydev/starcoin-tools；</div><br>
+            <div class="iconSize">2. 本页面功能使用前，请确保打开的不是钓鱼网站；</div><br>
+            <div class="iconSize">3. 若有任何疑问, 请在社区群内联系开发者【安_change】；</div><br>
+            <div class="iconSize">如果您觉得该功能对你有用，可以捐赠STC，STC捐赠地址: stc1p3dulmaaaqp9h96jtmqegjs552hhj0qt5jw0x2qen6p42xma68exgk70a777sqjmjaf9asv5fg22929qzpup</div>
           </template>
         </el-alert>
       </el-col>
@@ -20,13 +20,12 @@
     <el-row>
       <el-col :span="24">
         <el-card shadow="always">
-          <el-divider>Starcoin Move 合约标准库 v5 版升级</el-divider>
-          <el-link type="primary" href="https://news.starcoin.org/zh/2021/starcoin_stdlib_upgrade_v5/">点此查看官方详细通告</el-link><br><br>
-          Starcoin 主网上线以来第一次升级，主要包含以下特性：<br><br>
-          1. 从国库提款的时候增加额度限制，最大数额不能超过投票通过阈值（当前流通量的 4%）。<br>
-          2. 实现了新的链上认证策略，简化初始化链上账号的复杂度。
+          <el-divider>Starcoin 开放 Move 部署</el-divider>
+          <el-link type="primary" href="https://github.com/starcoinorg/starcoin/discussions/2621">点此查看官方详细通告</el-link><br><br>
+          随着Starcoin生态对Move部署的需求日益强烈，Starcoin计划发起正式开放Move合约新提案。倡议全面开放部署Move合约，允许任何人往链上部署Move合约、构建DeFi应用。<br>
+          此项提议通过，这将是一个里程碑式的时刻，意味着Starcoin生态完全敞开怀抱，全面拥抱DeFi生态。本提案是一种 OnChainConfig 变更的投票提案，通过投票改变链上配置。
           <el-divider>投票状态</el-divider>
-          <el-steps :active="proposalInfo.state - 1" finish-status="success">
+          <el-steps :active="proposalInfo.state" finish-status="success">
             <el-step title="⭐等待公示中" />
             <el-step title="🔥正在投票中" />
             <el-step title="😭提案被拒绝" />
@@ -176,18 +175,18 @@ export default {
       // 获取投票状态
       const proposalStateRsp = await this.provider.call({
         function_id: '0x1::Dao::proposal_state',
-        type_args: ['0x1::STC::STC', '0x1::UpgradeModuleDaoProposal::UpgradeModuleV2'],
-        args: ['0xb2aa52f94db4516c5beecef363af850a', '0']
+        type_args: ['0x1::STC::STC', '0x1::OnChainConfigDao::OnChainConfigUpdate<0x1::TransactionPublishOption::TransactionPublishOption>'],
+        args: ['0xb2aa52f94db4516c5beecef363af850a', '1']
       })
       // console.log('提案状态 -> ', proposalStateRsp)
       this.proposalInfo.state = proposalStateRsp[0]
       // 获取投票详情
       const proposalInfoRsp = await this.provider.call({
         function_id: '0x1::Dao::proposal_info',
-        type_args: ['0x1::STC::STC', '0x1::UpgradeModuleDaoProposal::UpgradeModuleV2'],
+        type_args: ['0x1::STC::STC', '0x1::OnChainConfigDao::OnChainConfigUpdate<0x1::TransactionPublishOption::TransactionPublishOption>'],
         args: ['0xb2aa52f94db4516c5beecef363af850a']
       })
-      this.proposalInfo.proposalId = proposalInfoRsp[0]
+      this.proposalInfo.proposalId = proposalInfoRsp[0] + ''
       const startTime = proposalInfoRsp[1]
       this.proposalInfo.startTime = moment(startTime).format('YYYY-MM-DD HH:mm:ss')
       const endTime = proposalInfoRsp[2]
@@ -315,8 +314,8 @@ export default {
           max_gas_amount: 10000000,
           script: {
             code: '0x1::DaoVoteScripts::unstake_vote',
-            type_args: ['0x1::STC::STC', '0x1::UpgradeModuleDaoProposal::UpgradeModuleV2'],
-            args: [receiverAddressHex, '0']
+            type_args: ['0x1::STC::STC', '0x1::OnChainConfigDao::OnChainConfigUpdate<0x1::TransactionPublishOption::TransactionPublishOption>'],
+            args: [receiverAddressHex, this.proposalInfo.proposalId]
           }
         }
         console.log('取回质押请求 -> ', JSON.stringify(txnRequest))
@@ -333,7 +332,7 @@ export default {
         const expirationTimestampSecs = nowSeconds + 43200
 
         // 生成原始提案交易数据
-        const scriptFunction = this.buildUnstakeVoteScriptFunction(receiverAddressHex, 0)
+        const scriptFunction = this.buildUnstakeVoteScriptFunction(receiverAddressHex, this.proposalInfo.proposalId)
         const rawVoteTransaction = this.generateRawUserTransaction(
           senderAddressHex,
           maxGasAmount,
@@ -395,8 +394,8 @@ export default {
           max_gas_amount: 10000000,
           script: {
             code: '0x1::DaoVoteScripts::cast_vote',
-            type_args: ['0x1::STC::STC', '0x1::UpgradeModuleDaoProposal::UpgradeModuleV2'],
-            args: [receiverAddressHex, '0', 'true', sendAmountString]
+            type_args: ['0x1::STC::STC', '0x1::OnChainConfigDao::OnChainConfigUpdate<0x1::TransactionPublishOption::TransactionPublishOption>'],
+            args: [receiverAddressHex, this.proposalInfo.proposalId, 'true', sendAmountString]
           }
         }
         console.log('提案请求 -> ', JSON.stringify(txnRequest))
@@ -413,7 +412,7 @@ export default {
         const expirationTimestampSecs = nowSeconds + 43200
 
         // 生成原始提案交易数据
-        const voteScriptFunction = this.buildVoteScriptFunction(receiverAddressHex, 0, amount, agree)
+        const voteScriptFunction = this.buildVoteScriptFunction(receiverAddressHex, this.proposalInfo.proposalId, amount, agree)
         const rawVoteTransaction = this.generateRawUserTransaction(
           senderAddressHex,
           maxGasAmount,
@@ -439,6 +438,8 @@ export default {
         this.voteLoading = false
       }
       await this.getAccountInfo()
+      // 刷新投票数据
+      this.initVoteInfo()
     },
     /**
      * 构造 vote payload
@@ -455,7 +456,10 @@ export default {
       const functionId = '0x1::DaoVoteScripts::cast_vote'
       const tyArgs = [
         { Struct: { address: '0x1', module: 'STC', name: 'STC', type_params: [] }},
-        { Struct: { address: '0x1', module: 'UpgradeModuleDaoProposal', name: 'UpgradeModuleV2', type_params: [] }}
+        { Struct: { address: '0x1', module: 'OnChainConfigDao', name: 'OnChainConfigUpdate',
+          type_params: [
+            { Struct: { address: '0x1', module: 'TransactionPublishOption', name: 'TransactionPublishOption', type_params: [] }}
+          ] }}
       ]
 
       // Multiple BcsSerializers should be used in different closures, otherwise, the latter will be contaminated by the former.
@@ -489,7 +493,7 @@ export default {
     /**
      * 构造 unstake vote payload
      */
-    buildUnstakeVoteScriptFunction(receiver, proposalId, amount, agree) {
+    buildUnstakeVoteScriptFunction(receiver, proposalId) {
       let receiverAddress
       if (receiver.slice(0, 3) === 'stc') {
         const receiptIdentifier = starcoin.starcoin_types.ReceiptIdentifier.decode(receiver)
@@ -501,7 +505,7 @@ export default {
       const functionId = '0x1::DaoVoteScripts::unstake_vote'
       const tyArgs = [
         { Struct: { address: '0x1', module: 'STC', name: 'STC', type_params: [] }},
-        { Struct: { address: '0x1', module: 'UpgradeModuleDaoProposal', name: 'UpgradeModuleV2', type_params: [] }}
+        { Struct: { address: '0x1', module: 'OnChainConfigDao', name: 'OnChainConfigUpdate<0x1::TransactionPublishOption::TransactionPublishOption>', type_params: [] }}
       ]
 
       const proposalSCSHex = (function() {
