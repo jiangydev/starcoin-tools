@@ -505,7 +505,10 @@ export default {
       const functionId = '0x1::DaoVoteScripts::unstake_vote'
       const tyArgs = [
         { Struct: { address: '0x1', module: 'STC', name: 'STC', type_params: [] }},
-        { Struct: { address: '0x1', module: 'OnChainConfigDao', name: 'OnChainConfigUpdate<0x1::TransactionPublishOption::TransactionPublishOption>', type_params: [] }}
+        { Struct: { address: '0x1', module: 'OnChainConfigDao', name: 'OnChainConfigUpdate',
+          type_params: [
+            { Struct: { address: '0x1', module: 'TransactionPublishOption', name: 'TransactionPublishOption', type_params: [] }}
+          ] }}
       ]
 
       const proposalSCSHex = (function() {
